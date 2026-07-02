@@ -1,0 +1,58 @@
+services:
+  sandbox-agent:
+    build: .                       # builda do Dockerfile na raiz do repo
+    image: sandbox-agent:latest    # tag local (EasyPanel reusa)
+
+    # ═══ ISOLAMENTO — o motivo desse compose existir ═══
+    # libera bwrap a criar namespaces (unshare, mount, pivot_root)
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+
+    # ═══ Porta interna — EasyPanel roteia direto pro container via rede interna ═══
+    # NÃO usar `ports:` aqui — EasyPanel gerencia a exposição automaticamente.
+    # O healthcheck funciona porque curl dentro do container acessa 127.0.0.1:8080.
+    expose:
+      - "8080"
+
+    # ═══ ENV (SANDBOX_TOKEN vem do painel do EasyPanel) ═══
+    # IMPORTANTE: esta whitelist define quais envs do painel do EasyPanel
+    # chegam dentro do container. Adicionar novas envs aqui sempre que o
+    # sandbox-agent ler novas variáveis em runtime — senão o
+    # `process.env.X` vai retornar undefined mesmo com a env setada no
+    # painel.
+    environment:
+      SANDBOX_TOKEN: "${SANDBOX_TOKEN}"
+      PORT: "8080"
+      WORKSPACE: "/workspace"
+      SANDBOX_MEMORY_MAX: "4G"
+      SANDBOX_MEMORY_HIGH: "3G"
+      SANDBOX_CPU_QUOTA: "200%"
+      SANDBOX_TASKS_MAX: "4096"
+      # Morph LLM (Fast Apply + WarpGrep). Sem MORPH_API_KEY as tools
+      # `apply_edit` e `warpgrep` retornam erro mas as tools antigas
+      # (`fs_write`, `fs_edit`, `fs_search`) seguem funcionando.
+      MORPH_API_KEY: "${MORPH_API_KEY:-}"
+      MORPH_BASE_URL: "${MORPH_BASE_URL:-https://api.morphllm.com/v1}"
+      MORPH_MODEL_FAST: "${MORPH_MODEL_FAST:-morph-v3-fast}"
+      MORPH_MODEL_LARGE: "${MORPH_MODEL_LARGE:-morph-v3-large}"
+      MORPH_WARPGREP_MODEL: "${MORPH_WARPGREP_MODEL:-morph-warp-grep-v2.1}"
+      MORPH_TIMEOUT_MS: "${MORPH_TIMEOUT_MS:-30000}"
+
+    # ═══ Workspace persistente entre restarts/deploys ═══
+    volumes:
+      - workspace:/workspace
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  workspace:
