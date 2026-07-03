@@ -3,7 +3,53 @@ import { createReadStream, type Stats } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { getWorktreePath, resolveSafe, toRelative } from '../workspace.js';
+import { getWorktreePath, resolveSafe, toRelative, SANDBOX_UID, SANDBOX_GID } from '../workspace.js';
+
+/**
+ * BUG FIX (auditoria de produção): `fs.mkdir(..., { recursive: true })`
+ * criava diretórios com owner root:root porque o processo do sandbox-agent
+ * roda como root (precisa pra criar namespaces bwrap). `ensureWorkspace()`
+ * só faz chown -R UMA VEZ no boot — qualquer diretório novo criado DEPOIS
+ * (via fs_mkdir, fs_write em path com pasta nova, fs_move pra destino novo)
+ * ficava root:root e quebrava a interop com run_command/start_process
+ * (que rodam como uid 1001 via setpriv — "Permission denied" ao escrever
+ * dentro dessas pastas).
+ *
+ * Cria os diretórios ausentes nível por nível (de fora pra dentro) e ajusta
+ * ownership em cada um logo após criar — mesmo dono dos diretórios criados
+ * no boot.
+ */
+async function mkdirChowned(dirPath: string): Promise<void> {
+  const missing: string[] = [];
+  let current = dirPath;
+  // Sobe a árvore até achar o primeiro ancestral que já existe.
+  for (;;) {
+    try {
+      await fs.access(current);
+      break;
+    } catch {
+      missing.unshift(current);
+      const parent = path.dirname(current);
+      if (parent === current) break; // chegou na raiz do filesystem
+      current = parent;
+    }
+  }
+  // Cria em ordem (mais externo primeiro) e chowna cada nível criado.
+  for (const dir of missing) {
+    try {
+      await fs.mkdir(dir);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== 'EEXIST') throw e;
+    }
+    try {
+      await fs.chown(dir, SANDBOX_UID, SANDBOX_GID);
+    } catch {
+      // Non-fatal: se o chown falhar (ex.: rodando sem privilégio em dev
+      // local), o diretório ainda foi criado — só não fica com o owner
+      // ideal. Não deve bloquear a operação de fs_write/fs_mkdir/fs_move.
+    }
+  }
+}
 
 /**
  * Escrita ATÔMICA: grava num arquivo temp no MESMO diretório do alvo e renomeia.
@@ -149,7 +195,7 @@ export async function writeFile(
       if (opts.ifMatchETag !== '*') throw new FsError('arquivo não existe pra If-Match', 'ENOENT');
     }
   }
-  await fs.mkdir(path.dirname(abs), { recursive: true });
+  await mkdirChowned(path.dirname(abs));
   const buf = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
   await atomicWrite(abs, buf);
   const st = await fs.stat(abs);
@@ -220,14 +266,14 @@ export async function statPath(p: string): Promise<FileStat> {
 
 export async function mkdir(p: string): Promise<{ path: string }> {
   const abs = safe(p);
-  await fs.mkdir(abs, { recursive: true });
+  await mkdirChowned(abs);
   return { path: toRelative(abs) };
 }
 
 export async function moveFile(from: string, to: string): Promise<{ from: string; to: string }> {
   const absFrom = safe(from);
   const absTo = safe(to);
-  await fs.mkdir(path.dirname(absTo), { recursive: true });
+  await mkdirChowned(path.dirname(absTo));
   try { await fs.rename(absFrom, absTo); }
   catch (e) { wrapNodeFsError(e, 'fs.rename falhou'); }
   return { from: toRelative(absFrom), to: toRelative(absTo) };
