@@ -157,7 +157,13 @@ export function registerFilesystemTools(server: McpServer): void {
   server.registerTool(
     'fs_delete',
     {
-      description: 'Remove arquivo ou diretório (recursivo se for diretório).',
+      description:
+        'Remove arquivo ou diretório (recursivo se for diretório). ' +
+        'IMPORTANTE: se você for checar o resultado logo depois (ex.: fs_stat/fs_read/fs_list ' +
+        'no mesmo path), espere a resposta deste fs_delete chegar antes de disparar a próxima ' +
+        'chamada — não as dispare em paralelo/no mesmo batch. Chamadas concorrentes numa mesma ' +
+        'path com dependência causal (delete → leitura) podem correr na frente do delete e ' +
+        'retornar metadado obsoleto.',
       inputSchema: {
         path: z.string().describe('Path relativo ao workspace'),
         recursive: z.boolean().default(false).describe('Remover recursivamente (default: false)'),

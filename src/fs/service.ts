@@ -58,12 +58,31 @@ async function mkdirChowned(dirPath: string): Promise<void> {
  * truncado/corrompido se o container levasse SIGKILL (OOM/MemoryMax) no meio
  * da escrita — `moveFile` já usava `rename`, `writeFile`/`editFile` não. Ver
  * docs/proposta P2-escrita-arquivo-atomica.
+ *
+ * BUG FIX (auditoria de produção, achado durante validação do fix de
+ * diretórios): o `tmp` é criado via `fs.writeFile` pelo processo do
+ * sandbox-agent, que roda como root — então SEMPRE nasce root:root. O
+ * `rename` não muda ownership, então o arquivo final também ficava
+ * root:root. Isso não afetava só `fs_write` de arquivo NOVO: `fs_edit`
+ * num arquivo já existente (ex.: um arquivo do repo, clonado como
+ * sandbox:sandbox) também passava por aqui e TROCAVA o dono dele pra
+ * root:root — quebrando qualquer `run_command`/`start_process` (uid 1001)
+ * que precisasse reescrever esse arquivo depois (ex.: eslint --fix,
+ * prettier, build tools). Fix: chown pra sandbox:sandbox logo após o
+ * rename, sempre.
  */
 async function atomicWrite(abs: string, buf: Buffer): Promise<void> {
   const tmp = `${abs}.tmp-${randomBytes(6).toString('hex')}`;
   try {
     await fs.writeFile(tmp, buf);
     await fs.rename(tmp, abs);
+    try {
+      await fs.chown(abs, SANDBOX_UID, SANDBOX_GID);
+    } catch {
+      // Non-fatal: ambientes sem privilégio (dev local) não conseguem
+      // chown — o arquivo já foi escrito corretamente, só não fica com
+      // o owner ideal. Não deve bloquear fs_write/fs_edit.
+    }
   } catch (e) {
     await fs.rm(tmp, { force: true }).catch(() => {});
     throw e;
