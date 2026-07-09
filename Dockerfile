@@ -39,11 +39,35 @@ RUN apt-get update \
       git curl wget ca-certificates gnupg unzip xz-utils sudo \
       build-essential pkg-config \
       ripgrep procps bubblewrap \
-      iproute2 lsof \
+      iproute2 lsof ppp \
       python3 python3-pip python3-venv \
+      openfortivpn mysql-client \
  && rm -rf /var/lib/apt/lists/* \
  # bwrap setuid-root: permite criar namespaces sem CAP_SYS_ADMIN no container.
  && chmod u+s /usr/bin/bwrap
+
+# ─── MSSQL tools (sqlcmd) ─────────────────────────────────────────────────────
+# Microsoft não empacota mssql-tools18 pra bookworm-slim, então instalamos
+# direto do .deb + dependências ODBC.
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+      | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] \
+      https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
+      > /etc/apt/sources.list.d/mssql-release.list \
+ && apt-get update \
+ && ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
+      mssql-tools18 \
+ && ln -s /opt/mssql-tools18/bin/sqlcmd /usr/local/bin/sqlcmd \
+ && rm -rf /var/lib/apt/lists/*
+
+# ─── VPN config + entrypoint ──────────────────────────────────────────────────
+# A config da VPN com credenciais. Em produção, considerar usar
+# variáveis de ambiente ou Docker secrets em vez de texto puro.
+COPY fortivpn.conf /etc/fortivpn.conf
+RUN chmod 600 /etc/fortivpn.conf
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # npm tunado pra redes instáveis + menos ruído
 RUN npm config set --global fetch-retries 5 \
@@ -76,4 +100,5 @@ VOLUME ["/workspace"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS http://127.0.0.1:${PORT}/health || exit 1
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "dist/server.cjs"]

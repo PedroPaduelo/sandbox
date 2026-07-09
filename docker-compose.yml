@@ -7,9 +7,12 @@ services:
     # libera bwrap a criar namespaces (unshare, mount, pivot_root)
     cap_add:
       - SYS_ADMIN
+      - NET_ADMIN              # necessário pro openfortivpn gerenciar rotas
     security_opt:
       - seccomp=unconfined
       - apparmor=unconfined
+    devices:
+      - /dev/ppp:/dev/ppp     # necessário pro pppd (VPN FortiClient)
 
     # ═══ Porta interna — EasyPanel roteia direto pro container via rede interna ═══
     # NÃO usar `ports:` aqui — EasyPanel gerencia a exposição automaticamente.
