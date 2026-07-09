@@ -41,7 +41,7 @@ RUN apt-get update \
       ripgrep procps bubblewrap \
       iproute2 lsof ppp \
       python3 python3-pip python3-venv \
-      openfortivpn mysql-client \
+      openfortivpn default-mysql-client \
  && rm -rf /var/lib/apt/lists/* \
  # bwrap setuid-root: permite criar namespaces sem CAP_SYS_ADMIN no container.
  && chmod u+s /usr/bin/bwrap
