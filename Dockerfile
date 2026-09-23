@@ -38,13 +38,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git curl wget ca-certificates gnupg unzip xz-utils sudo \
       build-essential pkg-config \
-      ripgrep procps bubblewrap \
-      iproute2 lsof ppp \
+      ripgrep procps \
+      iproute2 lsof \
       python3 python3-pip python3-venv \
-      openfortivpn default-mysql-client \
- && rm -rf /var/lib/apt/lists/* \
- # bwrap setuid-root: permite criar namespaces sem CAP_SYS_ADMIN no container.
- && chmod u+s /usr/bin/bwrap
+      default-mysql-client \
+ && rm -rf /var/lib/apt/lists/*
 
 # ─── MSSQL tools (sqlcmd) ─────────────────────────────────────────────────────
 # Microsoft não empacota mssql-tools18 pra bookworm-slim, então instalamos
@@ -60,15 +58,6 @@ RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
  && ln -s /opt/mssql-tools18/bin/sqlcmd /usr/local/bin/sqlcmd \
  && rm -rf /var/lib/apt/lists/*
 
-# ─── VPN config + entrypoint ──────────────────────────────────────────────────
-# A config da VPN com credenciais. Em produção, considerar usar
-# variáveis de ambiente ou Docker secrets em vez de texto puro.
-COPY fortivpn.conf /etc/fortivpn.conf
-RUN chmod 600 /etc/fortivpn.conf
-
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
 # npm tunado pra redes instáveis + menos ruído
 RUN npm config set --global fetch-retries 5 \
  && npm config set --global fetch-retry-mintimeout 10000 \
@@ -78,7 +67,9 @@ RUN npm config set --global fetch-retries 5 \
  && npm config set --global fund false \
  && npm config set --global update-notifier false
 
-# User sandbox (uid 1001) — setpriv dropa pra esse no bwrap
+# User sandbox (uid 1001) — os comandos do agente rodam com esse uid (setpriv).
+# O isolamento de verdade e o runtime gVisor (runsc) do container: kernel em
+# user-space, sem bwrap, sem SYS_ADMIN e sem seccomp/apparmor desligados.
 RUN useradd --create-home --uid 1001 --shell /bin/bash sandbox \
  && mkdir -p /workspace \
  && chown -R sandbox:sandbox /workspace /home/sandbox
@@ -100,5 +91,4 @@ VOLUME ["/workspace"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS http://127.0.0.1:${PORT}/health || exit 1
 
-ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "dist/server.cjs"]

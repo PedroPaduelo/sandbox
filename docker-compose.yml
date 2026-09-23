@@ -3,16 +3,13 @@ services:
     build: .                       # builda do Dockerfile na raiz do repo
     image: sandbox-agent:latest    # tag local (EasyPanel reusa)
 
-    # ═══ ISOLAMENTO — o motivo desse compose existir ═══
-    # libera bwrap a criar namespaces (unshare, mount, pivot_root)
-    cap_add:
-      - SYS_ADMIN
-      - NET_ADMIN              # necessário pro openfortivpn gerenciar rotas
-    security_opt:
-      - seccomp=unconfined
-      - apparmor=unconfined
-    devices:
-      - /dev/ppp:/dev/ppp     # necessário pro pppd (VPN FortiClient)
+    # ═══ ISOLAMENTO — gVisor ═══
+    # O container roda sobre o kernel em user-space do gVisor: o agente e root
+    # aqui dentro (apt, pip, npm, git a vontade) sem tocar o kernel do host.
+    # Substitui cap_add SYS_ADMIN/NET_ADMIN + seccomp/apparmor unconfined + bwrap.
+    # Requer runsc instalado no Docker do host (no MiniPanel: Resources >
+    # Isolated runtime faz o mesmo sem este campo).
+    runtime: runsc
 
     # ═══ Porta interna — EasyPanel roteia direto pro container via rede interna ═══
     # NÃO usar `ports:` aqui — EasyPanel gerencia a exposição automaticamente.
